@@ -17,9 +17,10 @@ int y;
 int uLast;
 int vLast;
 
+bool inited = false;
 
 
-const byte SETTINGS_VERSION = 0xFA; // Schema version of settings in EEPROM
+const byte SETTINGS_VERSION = 0xFB; // Schema version of settings in EEPROM
 
 const byte inputPins[] = {5,4,3,2,14,16,10};    //declaring inputs and outputs for buttonts
 const byte outputPins[] = {9,8,7,6}; 
@@ -72,6 +73,10 @@ byte State = 0;
 
 
 void setup() {
+  Serial.begin(9600);
+  while (!Serial) {
+  }
+  
   pinMode(safetyPin,INPUT);       //running the SAFETY-loop as long pin 21 is disconnected from GND
   digitalWrite(safetyPin,HIGH);
   while (digitalRead(safetyPin)){   
@@ -99,9 +104,7 @@ void setup() {
   Keyboard.begin();
 
   String settings = ReadEEPROMSettings();
-  if(settings.length() == 0) {
-    while (Serial.available() == 0)  {  Serial.println(catVersion);   delay(10);  }
-  } else {
+  if(settings.length() > 0) {
     parseSettings(settings);
   }
 }
@@ -110,17 +113,31 @@ void setup() {
 void loop() {
   ReadSerialcomm();
 
-  ButtonRun();
+  if (inited) ButtonRun();
 }
 
 
 
 void ReadSerialcomm(){
   if (Serial.available() > 0){
-      String settings = Serial.readStringUntil(strEnder);
-      delay(1000);
-      parseSettings(settings);
-      writeSettingsToEEPROM(settings);
+      char command = Serial.read();
+      if (command == 'M') { // Model Number
+         Serial.println(catVersion);
+         Serial.flush();
+         return;
+      }
+      if (command == 'U') { // Upload
+        String settings = Serial.readStringUntil(strEnder);
+        parseSettings(settings);
+        writeSettingsToEEPROM(settings);
+
+        Serial.println("SUCCESS");
+        Serial.flush();
+        return;
+      }
+      
+      Serial.println("ERROR");
+      Serial.flush();
   }
 }
 
@@ -164,12 +181,14 @@ void parseSettings(String settings) {
       eIndex++;                    
       }
    }
+
+   inited = true;
 }
 
 void ButtonRun(){  
   for (o=0; o<outputPins_count; o++){                  //looping through Outputpins and setting one at a time to LOW 
       digitalWrite(outputPins[o],LOW);   
-      delayMicroseconds(0);
+      delayMicroseconds(0); // (CALLAN) Was delay here, do we need it?
       
       for(i=0; i<inputPins_count; i++){                // looping through Inputpins and checking for the LOW
 
@@ -354,7 +373,7 @@ void MouseRun(){
     x = mouse.read(DELTA_X_REG);    //DELTA_X_REG store the x movements detected by the sensor
     y = mouse.read(DELTA_Y_REG);    //DELTA_Y_REG store the y movements detected by the sensor
 
-    Mouse.move(x, -y, 0);
+    Mouse.move(x,-y, 0);
 
 //    MousePrint(x,y);  
 }
