@@ -8,18 +8,15 @@
 
 #define safetyPin 21  //SAFETY: connect pin 21 to GND
 
+#define AInput 1      //pins for encoder
+#define BInput 0
+
+const String catVersion = "CR-BW0-B00-M00";   // Serial Communication
 
 ADNS5050 mouse(20,15,18);   //ADNS5050(int sdio, int sclk, int ncs);
 #define NRESET 19
-unsigned char value=0;    //This value will be used to store information from the mouse registers.
-int x;
-int y;
-int uLast;
-int vLast;
 
 bool inited = false;
-
-
 const byte SETTINGS_VERSION = 0xFB; // Schema version of settings in EEPROM
 
 const byte inputPins[] = {5,4,3,2,14,16,10};    //declaring inputs and outputs for buttonts
@@ -36,53 +33,19 @@ bool EventRunning[36] = {false,false,false,false,false,false,false,false,false,f
                           false,false,false,false,false,false,false,false,false,false,
                           false,false,false,false,false,false,false,false,false,false,
                           false,false,false,false,false,false};
-byte o;
-byte i;
-byte eventIndex;
-
-const String catVersion = "CR-BW0-B00-M00";   // Serial Communication
 String eventSet[36];
-String transientEvent; 
-char eventComponent;
 
+const char onRelease = 0xf9;
 const char strEnder = 0xfa;
-const char delimiter = 0xff;
-const char mouseClickLeft = 0xfe;
+const char stepOff = 0xfb;
 const char mouseClickRight = 0xfc;
 const char mouseClickMiddle = 0xfd;
-
-byte eL;
-
-int k;  //loop variable for subfunctions
-
-const char ctrl = 0x80;
-byte ctrl_pressed = 255;
-const char shift = 0x81;
-byte shift_pressed = 255;
-
-
-
-#define AInput 1      //pins for encoder
-#define BInput 0
-byte lastState = 0;   // variables for encoder 
-byte steps = 0;
-int  cw = 0;
-byte AState = 0;
-byte BState = 0;
-byte State = 0;
-
+const char mouseClickLeft = 0xfe;
+const char delimiter = 0xff;
 
 void setup() {
   Serial.begin(9600);
-  while (!Serial) {
-  }
   
-  pinMode(safetyPin,INPUT);       //running the SAFETY-loop as long pin 21 is disconnected from GND
-  digitalWrite(safetyPin,HIGH);
-  while (digitalRead(safetyPin)){   
-    Serial.println("safty loop");
-    delay(5);
-  }
   for(byte j=0; j<outputPins_count; j++){    //declaring the outputpins 
     pinMode(outputPins[j],OUTPUT);
     digitalWrite(outputPins[j],HIGH);  
@@ -113,13 +76,17 @@ void setup() {
 void loop() {
   ReadSerialcomm();
 
-  if (inited) ButtonRun();
+  if (inited) {
+    ButtonRun();
+    MouseRun();                       // ADNS5050 sub funktion
+    EncoderRun();                         // encoder sub funktion
+  }
 }
 
 
 
 void ReadSerialcomm(){
-  if (Serial.available() > 0){
+  if (Serial && Serial.available() > 0){
       char command = Serial.read();
       if (command == 'M') { // Model Number
          Serial.println(catVersion);
@@ -186,13 +153,13 @@ void parseSettings(String settings) {
 }
 
 void ButtonRun(){  
-  for (o=0; o<outputPins_count; o++){                  //looping through Outputpins and setting one at a time to LOW 
+  for (int o=0; o<outputPins_count; o++){                  //looping through Outputpins and setting one at a time to LOW 
       digitalWrite(outputPins[o],LOW);   
       delayMicroseconds(0); // (CALLAN) Was delay here, do we need it?
       
-      for(i=0; i<inputPins_count; i++){                // looping through Inputpins and checking for the LOW
+      for(int i=0; i<inputPins_count; i++){                // looping through Inputpins and checking for the LOW
 
-          eventIndex = buttonMap[o][i];
+          const byte eventIndex = buttonMap[o][i];
           
           if(digitalRead(inputPins[i]) == LOW){
             pressEventSet(eventIndex);
@@ -201,190 +168,156 @@ void ButtonRun(){
             releaseEventSet(eventIndex);      
           }
       }      
-    digitalWrite(outputPins[o],HIGH);              //setting the Outputpin back to HIGH 
-//    delayMicroseconds(500);
-    MouseRun();                       // ADNS5050 sub funktion
-    EncoderRun();                         // encoder sub funktion
+    digitalWrite(outputPins[o],HIGH); //setting the Outputpin back to HIGH 
   }
 }
+
 void pressEventSet(byte index){
   
-  if (EventRunning[index] == false){
-    
-    transientEvent = eventSet[index];
-    eL = transientEvent.length();
-    
-    for(k=0; k < eL; k++){ 
-
-        eventComponent = transientEvent[k];
-      
-        if(eventComponent == mouseClickLeft){
-          Serial.println("LEFT MOUSE PRESSED");            
-            Mouse.press(MOUSE_LEFT);
+  if (EventRunning[index] == true) return;
+  EventRunning[index] = true;
+  
+  const String eventScript = eventSet[index];
+  int releaseIndex = eventScript.indexOf(onRelease);
+  releaseIndex = releaseIndex == -1 ? eventScript.length() : releaseIndex;
+  
+  for(int k=0; releaseIndex < releaseIndex; k++){
+      if (eventScript[k] == stepOff) {
+        for(int i = k -1; i >= 0 && eventScript[i] != stepOff; i--) {
+          release(eventScript[i]);
         }
-        else if(eventComponent == mouseClickMiddle){
-            Mouse.press(MOUSE_MIDDLE);
-        }
-        else if(eventComponent == mouseClickRight){
-            Mouse.press(MOUSE_RIGHT);
-        }
-        else{
-            Keyboard.press(eventComponent);
-            if(eventComponent == ctrl){
-              ctrl_pressed = index;
-            }
-            if(eventComponent == shift){
-              shift_pressed = index;           
-            }              
-        }             
-    }    
-    //printButtonEvent(index);           // function for serial print of buttons
-    EventRunning[index] = true;
-  }
-  else{
-    //do nothing
-    //printButtonEvent(index);  // function for serial print of buttons
+      } else {
+        press(eventScript[k]);
+      }
   }
 }
+
 void releaseEventSet(byte index){
-  if (EventRunning[index] == true){
+  if (EventRunning[index] == false) return;
+  EventRunning[index] = false;
 
-    transientEvent = eventSet[index];
-    eL = transientEvent.length();
-    
-    for(k=0; k < eL; k++){ 
+  const String eventScript = eventSet[index];
+  const int releaseIndex = eventScript.indexOf(onRelease);
+  const int scriptLength = eventScript.length();
+  const initialRelease = releaseIndex == -1 ? scriptLength : releaseIndex;
 
-        eventComponent = transientEvent[k];
-      
-        if(eventComponent == mouseClickLeft){
-          Serial.println("LEFT MOUSE RELEASED");     
-            Mouse.release(MOUSE_LEFT);
+  for(int k = initialRelease - 1; k >= 0 && eventScript[k] != stepOff; k--){
+    release(eventScript[k]);
+  }
+
+  if (releaseIndex != -1) {
+    for(int k = releaseIndex + 1; k < scriptLength; k++) {
+      if(eventScript[k] == stepOff) {
+        for(int i = k -1; i > releaseIndex && eventScript[i] != stepOff; i--) {
+          release(eventScript[i]);
         }
-        else if(eventComponent == mouseClickMiddle){
-            Mouse.release(MOUSE_MIDDLE);            
-        }
-        else if(eventComponent == mouseClickRight){
-            Mouse.release(MOUSE_RIGHT);      
-        }
-        else if(eventComponent == ctrl || eventComponent == shift){
-                if (index == ctrl_pressed){
-                  Keyboard.release(eventComponent);
-                  ctrl_pressed = 255;  
-                }  
-                else if (index == shift_pressed){
-                  Keyboard.release(eventComponent);
-                  shift_pressed = 255;  
-                }                      
-        }          
-        else{     
-            Keyboard.release(eventComponent);      
-                     
-        }         
+      } else {
+        press(eventScript[k]);
+      }
     }
-      EventRunning[index] = false;
+
+    for(int k = scriptLength - 1; k > releaseIndex && eventScript[k] != stepOff; k--) {
+      release(eventScript[k]);
+    }
   }
 }
-void printButtonEvent(byte index){
-  Serial.print("i ");
-  Serial.print(index);
-  Serial.print("\tpressed ");
-  Serial.print(EventRunning[index]);
-  Serial.println();
+
+
+void press(const char c) {
+  if(c == mouseClickLeft){          
+      Mouse.press(MOUSE_LEFT);
+  }
+  else if(c == mouseClickMiddle){
+      Mouse.press(MOUSE_MIDDLE);
+  }
+  else if(c == mouseClickRight){
+      Mouse.press(MOUSE_RIGHT);
+  }
+  else
+  {
+      Keyboard.press(c);            
+  }            
 }
 
-
-
+void release(const char c) {
+  if(c == mouseClickLeft){  
+      Mouse.release(MOUSE_LEFT);
+  }
+  else if(c == mouseClickMiddle){
+      Mouse.release(MOUSE_MIDDLE);            
+  }
+  else if(c == mouseClickRight){
+      Mouse.release(MOUSE_RIGHT);      
+  } else {     
+      Keyboard.release(c);                 
+  }  
+}
 
 //EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE
 void EncoderRun(){
-  AState = digitalRead(AInput);
-  BState = digitalRead(BInput) << 1;
-  State = AState | BState;
+  static byte lastState = 0;   // variables for encoder 
+  static byte steps = 0;
+
+  const byte AState = digitalRead(AInput);
+  const byte BState = digitalRead(BInput) << 1;
+  const byte State = AState | BState;
+  int cw = 0;
   
-  if (lastState != State){
-    //EncoderPrint(State, cw, steps, AState, BState); // function for serial print
-    
-    switch (State) {
-      case 0:
-        if (lastState == 2){
-          steps++;
-          cw = 1;
-        }
-        else if(lastState == 1){
-          steps--;
-          cw = -1;
-        }
-        break;
-      case 1:
-        if (lastState == 0){
-          steps++;
-          cw = 1;
-        }
-        else if(lastState == 3){
-          steps--;
-          cw = -1;
-        }
-        break;
-      case 2:
-        if (lastState == 3){
-          steps++;
-          cw = 1;
-        }
-        else if(lastState == 0){
-          steps--;
-          cw = -1;
-        }
-        break;
-      case 3:
-        if (lastState == 1){
-          steps++;
-          cw = 1;
-        }
-        else if(lastState == 2){
-          steps--;
-          cw = -1;
-        }
-        break;
-    }
+  if (lastState == State){
+    return;
   }
+  
+  switch (State) {
+    case 0:
+      if (lastState == 2){
+        steps++;
+        cw = 1;
+      }
+      else if(lastState == 1){
+        steps--;
+        cw = -1;
+      }
+      break;
+    case 1:
+      if (lastState == 0){
+        steps++;
+        cw = 1;
+      }
+      else if(lastState == 3){
+        steps--;
+        cw = -1;
+      }
+      break;
+    case 2:
+      if (lastState == 3){
+        steps++;
+        cw = 1;
+      }
+      else if(lastState == 0){
+        steps--;
+        cw = -1;
+      }
+      break;
+    case 3:
+      if (lastState == 1){
+        steps++;
+        cw = 1;
+      }
+      else if(lastState == 2){
+        steps--;
+        cw = -1;
+      }
+      break;
+  }
+
   lastState = State;
   Mouse.move(0, 0, cw);
-  cw = 0;
 }
-
-void EncoderPrint(int State, int cw, int steps, int AState, int BState){
-  Serial.print("State ");
-  Serial.print(State);
-  Serial.print("\t cw ");
-  Serial.print(cw);
-  Serial.print("\t steps ");
-  Serial.print(steps);
-  Serial.print("\t AState ");
-  Serial.print(AState);
-  Serial.print("\t BState ");
-  Serial.println(BState);
-}
-//EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE
-
 
 //MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
 void MouseRun(){
+    const int x = mouse.read(DELTA_X_REG);    //DELTA_X_REG store the x movements detected by the sensor
+    const int y = mouse.read(DELTA_Y_REG);    //DELTA_Y_REG store the y movements detected by the sensor
 
-    x = mouse.read(DELTA_X_REG);    //DELTA_X_REG store the x movements detected by the sensor
-    y = mouse.read(DELTA_Y_REG);    //DELTA_Y_REG store the y movements detected by the sensor
-
-    Mouse.move(x,-y, 0);
-
-//    MousePrint(x,y);  
+    Mouse.move(x, y, 0); 
 }
-
-void MousePrint (int u, int v){
-  if (u != uLast || v != vLast){
-    Serial.print("x = ");       //DELTA_X_REG register
-    Serial.print(u);
-    Serial.print("   y = ");        //DELTA_Y_REG register 
-    Serial.println(v);
-    delay(10);
-  }
-}
-//MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM

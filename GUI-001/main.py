@@ -78,15 +78,18 @@ class MainWindow(Screen):
 
     def readSerialPorts(self):
         PortsList = serial.tools.list_ports.comports()
-        return [str(port) for port in PortsList if 'Arduino' in str(port)]
+        return [str(port) for port in PortsList if 'Arduino' in str(port)] + ["FAKE"]
     
     def connectToSerialPort(self, port):
-        try:
-            conn = connectToPort(port)
-            if conn is None: return
-        except SystemError as e:
-            self.ids.connect_spinner.text = "#ERROR"
-            return
+        if port == "FAKE":
+            availableDevicesDict["CR-BW0-B00-M00"] = "FAKE"
+        else:
+            try:
+                conn = connectToPort(port)
+                if conn is None: return
+            except SystemError as e:
+                self.ids.connect_spinner.text = "#ERROR"
+                return
 
         self.ids.connect_spinner.text = "Connect"
         self.on_kv_post()
@@ -352,11 +355,31 @@ class ButtonAssignment(Screen):
         if self.shortcutText == '':
             self.shortcutText = buttonText
         else:
-            self.shortcutText = f'{self.shortcutText} + {buttonText}'
+            if (self.shortcutText[-2:] == "->"):
+                self.shortcutText = f'{self.shortcutText} {buttonText}'
+            elif (self.shortcutText[-2:] == "||"):
+                self.shortcutText = f'{self.shortcutText} {buttonText}'
+            else:
+                self.shortcutText = f'{self.shortcutText} + {buttonText}'
         self.ids.id_lable_shortcut.text = f'Shortcut: {self.shortcutText}'
         # shortcut key-hex series
         self.currentKeySet.append(hexval)
-        print(self.currentKeySet)
+    
+    def stepOff(self):
+        if self.shortcutText == '':
+            return
+        else:
+            self.shortcutText = f'{self.shortcutText} ->'
+        self.ids.id_lable_shortcut.text = f'Shortcut: {self.shortcutText}'
+        self.currentKeySet.append(0xFB)
+    
+    def onRelease(self):
+        if ' ||' in self.shortcutText:
+            return
+        else:
+            self.shortcutText = f'{self.shortcutText} ||'
+        self.ids.id_lable_shortcut.text = f'Shortcut: {self.shortcutText}'
+        self.currentKeySet.append(0xF9)
 
     # hex to lable
     # self.ids.id_label_hex.text = str(hexval)

@@ -896,6 +896,16 @@ WindowManager:
 				on_release: root.deleteBA()
 
 			Button:
+				text: 'Step'
+				on_release: 
+					root.stepOff()
+
+			Button:
+				text: 'Release'
+				on_release: 
+					root.onRelease()
+
+			Button:
 				text: 'Save Button Assignment'
 				on_release: 
 					root.saveButtonFunktion(id_BA_Screen.currentLayer,\
